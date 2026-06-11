@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ROCO'S Works</title>
+    <link rel="stylesheet" href="styles-admin.css?v=1">
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">ROCO'S専用事務アプリ</p>
+        <h1>ROCO'S Works</h1>
+      </div>
+      <div class="header-actions">
+        <a class="primary-button link-button" href="index.html">iPad入力</a>
+        <button class="icon-button" id="printButton" title="印刷">⎙</button>
+        <button class="primary-button" id="exportButton">CSV出力</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar">
+        <section class="panel">
+          <h2>月と事業所設定</h2>
+          <label>
+            対象月
+            <input type="month" id="monthInput">
+          </label>
+          <label>
+            基本時給
+            <input type="number" id="hourlyRateInput" min="0" step="10">
+          </label>
+          <label>
+            朝夕の時給
+            <input type="number" id="specialRateInput" min="0" step="10">
+          </label>
+          <label>
+            食費控除 1食
+            <input type="number" id="mealCostInput" min="0" step="10">
+          </label>
+          <label>
+            休日出勤加算
+            <input type="number" id="holidayBonusInput" min="0" step="10">
+          </label>
+          <label>
+            皆勤手当
+            <input type="number" id="perfectBonusInput" min="0" step="10">
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title-row">
+            <h2>利用者</h2>
+            <button class="icon-button" id="addUserButton" title="利用者を追加">＋</button>
+          </div>
+          <div id="userList" class="user-list"></div>
+        </section>
+      </aside>
+
+      <section class="content">
+        <nav class="tabs" aria-label="機能切替">
+          <button class="tab active" data-tab="attendance">出勤簿</button>
+          <button class="tab" data-tab="wages">工賃計算</button>
+          <button class="tab" data-tab="slips">工賃明細</button>
+          <button class="tab" data-tab="diary">営業日誌</button>
+        </nav>
+
+        <section class="view active" id="attendanceView">
+          <div class="view-heading">
+            <div>
+              <h2>出勤簿</h2>
+              <p>開始・終了・休憩を入れると、320円/350円の時間帯を自動計算します。</p>
+            </div>
+            <div class="summary-strip" id="attendanceSummary"></div>
+          </div>
+          <div class="table-scroll-top" id="attendanceScrollTop" aria-label="出勤簿の横スクロール">
+            <div></div>
+          </div>
+          <div class="table-shell attendance-table-shell" id="attendanceTableShell">
+            <table id="attendanceTable"></table>
+          </div>
+        </section>
+
+        <section class="view" id="wagesView">
+          <div class="view-heading">
+            <div>
+              <h2>工賃計算書</h2>
+              <p>毎日・週数回・月単位の作業加算、販売数、食費控除をまとめます。</p>
+            </div>
+            <div class="summary-strip" id="wageSummary"></div>
+          </div>
+          <section class="panel task-settings-panel">
+            <div class="panel-title-row">
+              <h2>加算項目の全体設定</h2>
+            </div>
+            <div id="taskSettings"></div>
+          </section>
+          <section class="panel monthly-task-panel">
+            <div class="panel-title-row">
+              <h2>月の加算まとめカレンダー</h2>
+            </div>
+            <div id="monthlyTaskCalendar"></div>
+          </section>
+          <div class="table-shell">
+            <table id="wageTable"></table>
+          </div>
+        </section>
+
+        <section class="view" id="slipsView">
+          <div class="view-heading">
+            <div>
+              <h2>工賃明細</h2>
+              <p>利用者ごとの明細を確認し、印刷できます。</p>
+            </div>
+          </div>
+          <div id="slipsGrid" class="slips-grid"></div>
+        </section>
+
+        <section class="view" id="diaryView">
+          <div class="view-heading">
+            <div>
+              <h2>営業日誌</h2>
+              <p>出勤簿から人数と名前を自動集計し、売上と作業内容を記録します。</p>
+            </div>
+            <div class="diary-actions">
+              <div class="summary-strip" id="diarySummary"></div>
+              <button class="primary-button" id="importRegisterCsvButton">レジCSV取込</button>
+              <input type="file" id="registerCsvInput" accept=".csv,text/csv" hidden>
+            </div>
+          </div>
+          <div class="table-shell">
+            <table id="diaryTable"></table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <template id="userRowTemplate">
+      <div class="user-row">
+        <input class="user-name" type="text" aria-label="利用者名">
+        <input class="user-birthday" type="date" aria-label="誕生日">
+        <button class="icon-button danger" title="削除">×</button>
+      </div>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>`r`n    <script src="cloud-config.js"></script>`r`n    <script src="admin.js?v=1"></script>
+  </body>
+</html>

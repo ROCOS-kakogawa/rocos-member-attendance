@@ -33,6 +33,18 @@ button { cursor: pointer; }
 .app-header p { margin: 0 0 4px; font-weight: 800; }
 h1 { margin: 0; font-size: clamp(30px, 6vw, 54px); line-height: 1; }
 .clock { text-align: right; font-weight: 800; }
+.admin-link {
+  background: #fff7e8;
+  border: 1px solid #ffd39a;
+  border-radius: 999px;
+  color: #8a4a00;
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 4px;
+  padding: 6px 10px;
+  text-decoration: none;
+}
 .clock strong { display: block; font-size: clamp(30px, 6vw, 48px); }
 .tabs {
   display: grid;
