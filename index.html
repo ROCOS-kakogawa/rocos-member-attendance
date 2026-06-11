@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>メンバー出勤簿</title>
+  <meta name="theme-color" content="#f28c28">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="cloud-config.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p>ROCO'S WORKS</p>
+      <h1>メンバー出勤簿</h1>
+    </div>
+    <div class="clock">
+      <span id="todayLabel"></span>
+      <strong id="timeLabel">--:--</strong>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="ページ切替">
+    <button class="active" type="button" data-page="punch">打刻</button>
+    <button type="button" data-page="edit">訂正</button>
+    <button type="button" data-page="extras">加算</button>
+    <button type="button" data-page="diary">日誌</button>
+    <button type="button" data-page="admin">一覧</button>
+  </nav>
+
+  <main>
+    <p class="sync-status" id="syncStatus">読み込み中です</p>
+
+    <section class="page active" id="punchPage">
+      <section class="card punch-card">
+        <label class="date-field">日付
+          <input id="punchDate" type="date">
+        </label>
+        <label class="person-picker">名前
+          <select id="punchUser"></select>
+        </label>
+        <div class="status-card" id="punchStatus">読み込み中です</div>
+        <div class="punch-buttons">
+          <button class="punch-in" id="clockInButton" type="button">出勤</button>
+          <button class="punch-out" id="clockOutButton" type="button">退勤</button>
+        </div>
+        <p class="notice" id="punchNotice"></p>
+      </section>
+
+      <section class="card">
+        <h2>今日の出勤状況</h2>
+        <div id="todayList" class="today-list"></div>
+      </section>
+    </section>
+
+    <section class="page" id="editPage">
+      <section class="card">
+        <label>日付
+          <input id="editDate" type="date">
+        </label>
+        <label>名前
+          <select id="editUser"></select>
+        </label>
+        <div class="grid-2">
+          <label>状態
+            <select id="editStatus">
+              <option value="">未入力</option>
+              <option value="出勤">出勤</option>
+              <option value="在宅">在宅</option>
+              <option value="欠席">欠席</option>
+            </select>
+          </label>
+          <label>休憩 分
+            <input id="editBreak" type="number" min="0" step="5">
+          </label>
+          <label>出勤時刻
+            <input id="editStart" type="time">
+          </label>
+          <label>退勤時刻
+            <input id="editEnd" type="time">
+          </label>
+        </div>
+        <div class="big-check-grid">
+          <label><input id="editMeal" type="checkbox"><span>食事あり</span></label>
+          <label><input id="editTransportGo" type="checkbox"><span>送迎 行き</span></label>
+          <label><input id="editTransportReturn" type="checkbox"><span>送迎 帰り</span></label>
+        </div>
+        <label>備考
+          <textarea id="editMemo"></textarea>
+        </label>
+        <div class="actions">
+          <button class="save-button" id="saveEditButton" type="button">訂正を保存</button>
+          <button class="danger-button" id="deleteEditButton" type="button">この日の記録を削除</button>
+        </div>
+        <p class="notice" id="editNotice"></p>
+      </section>
+    </section>
+
+    <section class="page" id="extrasPage">
+      <section class="card">
+        <label>日付
+          <input id="extraDate" type="date">
+        </label>
+        <label>名前
+          <select id="extraUser"></select>
+        </label>
+      </section>
+      <section class="card"><h2>毎日の加算</h2><div id="dailyExtras" class="extra-list"></div></section>
+      <section class="card"><h2>週作業の加算</h2><div id="weeklyExtras" class="extra-list"></div></section>
+      <section class="card"><h2>月・個数の加算</h2><div id="monthlyExtras" class="extra-list"></div><div id="pieceExtras" class="extra-list"></div></section>
+    </section>
+
+    <section class="page" id="diaryPage">
+      <section class="card">
+        <label>日付
+          <input id="diaryDate" type="date">
+        </label>
+      </section>
+      <section class="card">
+        <h2>作業内容</h2>
+        <div id="diaryWorkOptions" class="work-option-grid"></div>
+      </section>
+      <section class="card">
+        <h2>その他</h2>
+        <textarea id="diaryExtraWork" placeholder="追加でやったこと"></textarea>
+        <p class="notice" id="diaryNotice"></p>
+      </section>
+    </section>
+
+    <section class="page" id="adminPage">
+      <section class="card">
+        <div class="admin-head">
+          <h2>出勤簿一覧</h2>
+          <input id="adminDate" type="date">
+        </div>
+        <div id="adminList" class="admin-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
