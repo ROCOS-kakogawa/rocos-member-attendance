@@ -823,6 +823,15 @@ function renderCalculatedViews() {
   ]);
 
   renderMonthlyTaskCalendar();
+els.monthlyTaskCalendar.querySelectorAll("[data-task-rate], [data-task-name]").forEach((field) => {
+    field.addEventListener("change", handleTaskSettingInput);
+  });
+  els.monthlyTaskCalendar.querySelectorAll("[data-add-task]").forEach((button) => {
+    button.addEventListener("click", handleAddTaskSetting);
+  });
+  els.monthlyTaskCalendar.querySelectorAll("[data-delete-task]").forEach((button) => {
+    button.addEventListener("click", handleDeleteTaskSetting);
+  });
   renderWageTable(rows);
   renderSlips(rows);
 }
@@ -925,25 +934,26 @@ function renderMonthlyTaskCalendar() {
   });
 }
 
-function monthlyAssigneeInputs() {
-  return state.taskRates.monthly.map((task, index) => {
+  const rows = state.taskRates.monthly.map((task, index) => {
     if (index === 0) return "";
     const selected = getMonthlyTaskAssignee(index);
     return `
-      <label class="monthly-assignee-row">
-        <span>${escapeHtml(task.name)}（${yen.format(task.amount)}）</span>
+      <label class="monthly-assignee-row monthly-assignee-edit-row">
+        <input data-task-name data-group="monthly" data-index="${index}" value="${escapeHtml(task.name)}" aria-label="月額加算名">
+        <input data-task-rate data-group="monthly" data-index="${index}" type="number" min="0" step="1" value="${task.amount}" aria-label="金額">
         <select data-monthly-task-assignee data-index="${index}">
           <option value="" ${selected ? "" : "selected"}>対象者なし</option>
           ${state.users.map((user) => `
             <option value="${user.id}" ${selected === user.id ? "selected" : ""}>${escapeHtml(user.name)}</option>
           `).join("")}
         </select>
+        <button class="delete-task-button" type="button" data-delete-task data-group="monthly" data-index="${index}" title="削除">削除</button>
       </label>
     `;
   }).join("");
-}
 
-function handleMonthlyTaskAssignee(event) {
+  return `${rows}<button class="add-task-button" type="button" data-add-task data-group="monthly">＋ 月額加算を追加</button>`;
+
   const index = event.target.dataset.index;
   state.taskMonthly[state.month] = state.taskMonthly[state.month] || {};
   if (event.target.value) {
