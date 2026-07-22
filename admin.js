@@ -230,11 +230,10 @@ function migrateState(saved) {
 }
 
 function mergeTasks(defaults, saved = []) {
-  const merged = defaults.map((task, index) => ({
-    ...task,
-    ...(saved[index] || {})
-  }));
-  return merged.concat(saved.slice(defaults.length));
+  if (Array.isArray(saved) && saved.length) {
+    return saved;
+  }
+  return deepClone(defaults);
 }
 
 function mergePieceTasks(defaults, saved = []) {
