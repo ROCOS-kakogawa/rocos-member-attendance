@@ -953,6 +953,9 @@ function renderMonthlyTaskCalendar() {
 
   return `${rows}<button class="add-task-button" type="button" data-add-task data-group="monthly">＋ 月額加算を追加</button>`;
 
+}
+
+function handleMonthlyTaskAssignee(event) {
   const index = event.target.dataset.index;
   state.taskMonthly[state.month] = state.taskMonthly[state.month] || {};
   if (event.target.value) {
