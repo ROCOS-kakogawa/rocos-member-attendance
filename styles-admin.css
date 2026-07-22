@@ -859,7 +859,29 @@ td textarea {
 .task-setting-row {
   display: grid;
   gap: 6px;
-  grid-template-columns: minmax(0, 1fr) 82px;
+  grid-template-columns: minmax(0, 1fr) 82px 52px;
+}
+
+.add-task-button {
+  background: #fff3f7;
+  border: 1px dashed var(--line-strong);
+  border-radius: 6px;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 34px;
+  margin-top: 4px;
+}
+
+.delete-task-button {
+  background: #fff;
+  border: 1px solid #f0cbd6;
+  border-radius: 6px;
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 38px;
+  padding: 0 6px;
 }
 
 .slips-grid {

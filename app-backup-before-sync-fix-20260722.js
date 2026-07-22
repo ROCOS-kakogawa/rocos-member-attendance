@@ -1,4 +1,4 @@
-﻿const CLOUD_ID = "rocos-works-member-attendance";
+const CLOUD_ID = "rocos-works-member-attendance";
 const yen = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 });
 const diaryWorkOptions = ["弁当販売", "仕入れ", "仕込み", "調理", "盛り付け", "配達", "洗い物", "清掃", "内職"];
 
@@ -147,28 +147,18 @@ async function loadState() {
         setStatus("クラウドから読み込みました");
         return normalizeState(data.data);
       }
-      const cached = loadCachedState();
-      if (cached) {
-        setStatus("端末保存を表示中");
-        return normalizeState(cached);
-      }
-      setStatus("初期データを表示中");
-      return await loadSeedState();
+      const seeded = await loadSeedState();
+      await saveWholeState(seeded);
+      setStatus("初期データをクラウドへ保存しました");
+      return seeded;
     } catch (error) {
       console.error(error);
       setStatus("クラウドにつながりません。端末保存を表示中");
     }
   }
-  return normalizeState(loadCachedState() || await loadSeedState());
+  return normalizeState(JSON.parse(localStorage.getItem("rocos-member-attendance-cache") || "null") || await loadSeedState());
 }
 
-function loadCachedState() {
-  try {
-    return JSON.parse(localStorage.getItem("rocos-member-attendance-cache") || "null");
-  } catch {
-    return null;
-  }
-}
 async function loadLatestState() {
   if (!cloudReady) return state;
   const { data, error } = await cloudClient
@@ -266,8 +256,8 @@ async function clockIn() {
       status: "出勤",
       start: timeKey(new Date()),
       end: "",
-      breakMinutes: record.breakMinutes == null ? 60 : record.breakMinutes,
-      meal: record.meal == null ? false : record.meal,
+      breakMinutes: record.breakMinutes ?? 60,
+      meal: record.meal ?? false,
       transportGo: transportGoChecked(record),
       transportReturn: transportReturnChecked(record),
       transport: transportGoChecked(record) || transportReturnChecked(record),
@@ -373,7 +363,7 @@ function renderEditForm() {
   els.editStatus.value = record.status || "";
   els.editStart.value = record.start || "";
   els.editEnd.value = record.end || "";
-  els.editBreak.value = record.breakMinutes == null ? 60 : record.breakMinutes;
+  els.editBreak.value = record.breakMinutes ?? 60;
   els.editMeal.checked = Boolean(record.meal);
   els.editTransportGo.checked = transportGoChecked(record);
   els.editTransportReturn.checked = transportReturnChecked(record);
@@ -476,7 +466,7 @@ function currentUser(kind) {
 
 function getDailyTaskValue(date, userId, group, index) {
   const key = recordKey(date, userId);
-  return (((state.taskDaily[key] || {})[group] || {})[index]) || 0;
+  return state.taskDaily[key]?.[group]?.[index] || 0;
 }
 
 function transportGoChecked(record = {}) {
@@ -526,7 +516,7 @@ function recordKey(date, userId) {
 }
 
 function escapeHtml(value) {
-  return String(value == null ? "" : value).replace(/[&<>"']/g, (char) => ({
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
@@ -538,6 +528,3 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value);
 }
-
-
-

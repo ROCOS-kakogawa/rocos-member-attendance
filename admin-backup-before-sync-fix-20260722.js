@@ -1,4 +1,4 @@
-﻿const yen = new Intl.NumberFormat("ja-JP", {
+const yen = new Intl.NumberFormat("ja-JP", {
   style: "currency",
   currency: "JPY",
   maximumFractionDigits: 0
@@ -135,14 +135,16 @@ async function loadSharedState() {
         localStorage.setItem(CACHE_KEY, JSON.stringify(state));
         return;
       }
-      state = migrateState(loadCachedState() || await loadSeedState());
+      state = migrateState(await loadSeedState());
+      await saveStateNow();
       return;
     } catch (error) {
       console.error(error);
     }
   }
   try {
-    state = migrateState(loadCachedState() || await loadSeedState());
+    const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    state = migrateState(cached || await loadSeedState());
   } catch {
     state = deepClone(defaultState);
   }
@@ -164,14 +166,6 @@ async function loadSeedState() {
   return response.json();
 }
 
-function loadCachedState() {
-  try {
-    return JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
-  } catch {
-    return null;
-  }
-}
-
 async function saveStateNow() {
   state = migrateState(state);
   localStorage.setItem(CACHE_KEY, JSON.stringify(state));
@@ -190,7 +184,7 @@ async function saveStateNow() {
   return true;
 }
 function migrateState(saved) {
-  const taskRates = saved.taskRates
+  const taskRates = saved.taskVersion === TASK_VERSION && saved.taskRates
     ? {
         daily: mergeTasks(defaultTaskRates.daily, saved.taskRates.daily),
         weekly: mergeTasks(defaultTaskRates.weekly, saved.taskRates.weekly),
@@ -1582,6 +1576,3 @@ window.addEventListener("beforeprint", () => {
   const activeTab = document.querySelector(".tab.active");
   document.body.dataset.printView = activeTab ? activeTab.dataset.tab : "slips";
 });
-
-
-
