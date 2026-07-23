@@ -243,10 +243,10 @@ async function saveStateNow() {
 function migrateState(saved) {
   const taskRates = saved.taskRates
     ? {
-        daily: mergeTasks(defaultTaskRates.daily, saved.taskRates.daily),
-        weekly: mergeTasks(defaultTaskRates.weekly, saved.taskRates.weekly),
-        monthly: mergeTasks(defaultTaskRates.monthly, saved.taskRates.monthly),
-        piece: mergePieceTasks(defaultTaskRates.piece, saved.taskRates.piece)
+        daily: Array.isArray(saved.taskRates.daily) ? deepClone(saved.taskRates.daily) : deepClone(defaultTaskRates.daily),
+        weekly: Array.isArray(saved.taskRates.weekly) ? deepClone(saved.taskRates.weekly) : deepClone(defaultTaskRates.weekly),
+        monthly: Array.isArray(saved.taskRates.monthly) ? deepClone(saved.taskRates.monthly) : deepClone(defaultTaskRates.monthly),
+        piece: Array.isArray(saved.taskRates.piece) ? deepClone(saved.taskRates.piece) : deepClone(defaultTaskRates.piece)
       }
     : deepClone(defaultTaskRates);
 
