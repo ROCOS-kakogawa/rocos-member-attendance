@@ -187,27 +187,43 @@ async function loadSeedState() {
   return normalizeState(await response.json());
 }
 
-async function saveWholeState(nextState) {
+async function saveWholeState(nextState, expectedUpdatedAt = null) {
   state = normalizeState(nextState);
   localStorage.setItem("rocos-member-attendance-cache", JSON.stringify(state));
   if (!cloudReady) return false;
-  const { error } = await cloudClient
+  let query = cloudClient
     .from("register_state")
-    .upsert({
-      id: CLOUD_ID,
-      data: state,
-      updated_at: new Date().toISOString()
-    });
+    .update({ data: state, updated_at: new Date().toISOString() })
+    .eq("id", CLOUD_ID);
+  if (expectedUpdatedAt) query = query.eq("updated_at", expectedUpdatedAt);
+  const { data, error } = await query.select("updated_at");
   if (error) throw error;
-  return true;
+  return Array.isArray(data) && data.length === 1;
 }
 
 async function patchState(mutator) {
-  const latest = normalizeState(await loadLatestState());
-  mutator(latest);
-  latest.updatedAt = new Date().toISOString();
-  await saveWholeState(latest);
-  render();
+  if (!cloudReady) {
+    const local = normalizeState(state);
+    mutator(local);
+    await saveWholeState(local);
+    render();
+    return;
+  }
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data, error } = await cloudClient
+      .from("register_state")
+      .select("data, updated_at")
+      .eq("id", CLOUD_ID)
+      .single();
+    if (error || !data || !data.data) throw error || new Error("クラウドデータを読み込めません");
+    const latest = normalizeState(data.data);
+    mutator(latest);
+    if (await saveWholeState(latest, data.updated_at)) {
+      render();
+      return;
+    }
+  }
+  throw new Error("同時更新が続いたため保存できませんでした");
 }
 
 function normalizeState(raw = {}) {

@@ -83,6 +83,7 @@ const defaultState = {
 };
 
 let state = deepClone(defaultState);
+let baseState = deepClone(defaultState);
 let saveTimer = null;
 let cloudClient = null;
 let cloudReady = false;
@@ -127,11 +128,12 @@ async function loadSharedState() {
     try {
       const { data, error } = await cloudClient
         .from("register_state")
-        .select("data")
+        .select("data, updated_at")
         .eq("id", CLOUD_ID)
         .single();
       if (!error && data && data.data) {
         state = migrateState(data.data);
+        baseState = deepClone(state);
         localStorage.setItem(CACHE_KEY, JSON.stringify(state));
         return;
       }
@@ -172,22 +174,71 @@ function loadCachedState() {
   }
 }
 
+function sameValue(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeConcurrent(base, local, remote) {
+  if (sameValue(local, base)) return deepClone(remote);
+  if (sameValue(remote, base)) return deepClone(local);
+  const localObject = local && typeof local === "object" && !Array.isArray(local);
+  const remoteObject = remote && typeof remote === "object" && !Array.isArray(remote);
+  const baseObject = base && typeof base === "object" && !Array.isArray(base);
+  if (!localObject || !remoteObject || !baseObject) return deepClone(local);
+  const result = {};
+  const keys = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
+  keys.forEach((key) => {
+    const inBase = Object.prototype.hasOwnProperty.call(base, key);
+    const inLocal = Object.prototype.hasOwnProperty.call(local, key);
+    const inRemote = Object.prototype.hasOwnProperty.call(remote, key);
+    if (!inBase) {
+      if (inLocal) result[key] = deepClone(local[key]);
+      else if (inRemote) result[key] = deepClone(remote[key]);
+      return;
+    }
+    if (!inLocal && (!inRemote || sameValue(remote[key], base[key]))) return;
+    if (!inRemote && inLocal && sameValue(local[key], base[key])) return;
+    if (!inLocal) return;
+    if (!inRemote) {
+      result[key] = deepClone(local[key]);
+      return;
+    }
+    result[key] = mergeConcurrent(base[key], local[key], remote[key]);
+  });
+  return result;
+}
+
 async function saveStateNow() {
-  state = migrateState(state);
-  localStorage.setItem(CACHE_KEY, JSON.stringify(state));
-  if (!cloudReady) return false;
-  const { error } = await cloudClient
-    .from("register_state")
-    .upsert({
-      id: CLOUD_ID,
-      data: state,
-      updated_at: new Date().toISOString()
-    });
-  if (error) {
-    console.error(error);
-    throw error;
+  const localState = migrateState(state);
+  localStorage.setItem(CACHE_KEY, JSON.stringify(localState));
+  if (!cloudReady) {
+    state = localState;
+    baseState = deepClone(state);
+    return false;
   }
-  return true;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data: current, error: readError } = await cloudClient
+      .from("register_state")
+      .select("data, updated_at")
+      .eq("id", CLOUD_ID)
+      .single();
+    if (readError || !current || !current.data) throw readError || new Error("Cloud data is unavailable");
+    const merged = migrateState(mergeConcurrent(baseState, localState, migrateState(current.data)));
+    const { data: saved, error: saveError } = await cloudClient
+      .from("register_state")
+      .update({ data: merged, updated_at: new Date().toISOString() })
+      .eq("id", CLOUD_ID)
+      .eq("updated_at", current.updated_at)
+      .select("data, updated_at");
+    if (saveError) throw saveError;
+    if (saved && saved.length === 1) {
+      state = migrateState(saved[0].data);
+      baseState = deepClone(state);
+      localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+      return true;
+    }
+  }
+  throw new Error("Concurrent updates continued for too long");
 }
 function migrateState(saved) {
   const taskRates = saved.taskRates
@@ -230,10 +281,11 @@ function migrateState(saved) {
 }
 
 function mergeTasks(defaults, saved = []) {
-  if (Array.isArray(saved) && saved.length) {
-    return saved;
-  }
-  return deepClone(defaults);
+  const merged = defaults.map((task, index) => ({
+    ...task,
+    ...(saved[index] || {})
+  }));
+  return merged.concat(saved.slice(defaults.length));
 }
 
 function mergePieceTasks(defaults, saved = []) {
@@ -822,15 +874,6 @@ function renderCalculatedViews() {
   ]);
 
   renderMonthlyTaskCalendar();
-els.monthlyTaskCalendar.querySelectorAll("[data-task-rate], [data-task-name]").forEach((field) => {
-    field.addEventListener("change", handleTaskSettingInput);
-  });
-  els.monthlyTaskCalendar.querySelectorAll("[data-add-task]").forEach((button) => {
-    button.addEventListener("click", handleAddTaskSetting);
-  });
-  els.monthlyTaskCalendar.querySelectorAll("[data-delete-task]").forEach((button) => {
-    button.addEventListener("click", handleDeleteTaskSetting);
-  });
   renderWageTable(rows);
   renderSlips(rows);
 }
@@ -933,26 +976,22 @@ function renderMonthlyTaskCalendar() {
   });
 }
 
-  const rows = state.taskRates.monthly.map((task, index) => {
+function monthlyAssigneeInputs() {
+  return state.taskRates.monthly.map((task, index) => {
     if (index === 0) return "";
     const selected = getMonthlyTaskAssignee(index);
     return `
-      <label class="monthly-assignee-row monthly-assignee-edit-row">
-        <input data-task-name data-group="monthly" data-index="${index}" value="${escapeHtml(task.name)}" aria-label="月額加算名">
-        <input data-task-rate data-group="monthly" data-index="${index}" type="number" min="0" step="1" value="${task.amount}" aria-label="金額">
+      <label class="monthly-assignee-row">
+        <span>${escapeHtml(task.name)}（${yen.format(task.amount)}）</span>
         <select data-monthly-task-assignee data-index="${index}">
           <option value="" ${selected ? "" : "selected"}>対象者なし</option>
           ${state.users.map((user) => `
             <option value="${user.id}" ${selected === user.id ? "selected" : ""}>${escapeHtml(user.name)}</option>
           `).join("")}
         </select>
-        <button class="delete-task-button" type="button" data-delete-task data-group="monthly" data-index="${index}" title="削除">削除</button>
       </label>
     `;
   }).join("");
-
-  return `${rows}<button class="add-task-button" type="button" data-add-task data-group="monthly">＋ 月額加算を追加</button>`;
-
 }
 
 function handleMonthlyTaskAssignee(event) {
