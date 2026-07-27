@@ -281,6 +281,10 @@ button {
   justify-content: flex-end;
 }
 
+.summary-item-below {
+  margin-left: 100%;
+}
+
 .diary-actions {
   align-items: center;
   display: flex;

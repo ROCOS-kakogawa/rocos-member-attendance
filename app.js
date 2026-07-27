@@ -236,6 +236,7 @@ function normalizeState(raw = {}) {
     taskRates: raw.taskRates || { daily: [], weekly: [], monthly: [], piece: [] },
     taskDaily: raw.taskDaily && typeof raw.taskDaily === "object" ? raw.taskDaily : {},
     taskMonthly: raw.taskMonthly || {},
+    legacyMonthlyTasks: raw.legacyMonthlyTasks || {},
     diary: raw.diary && typeof raw.diary === "object" ? raw.diary : {},
     wageAdjustments: raw.wageAdjustments || {}
   };

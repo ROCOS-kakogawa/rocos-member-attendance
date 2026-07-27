@@ -1,4 +1,4 @@
-﻿const yen = new Intl.NumberFormat("ja-JP", {
+const yen = new Intl.NumberFormat("ja-JP", {
   style: "currency",
   currency: "JPY",
   maximumFractionDigits: 0
@@ -259,6 +259,7 @@ function migrateState(saved) {
     taskCounts: saved.taskCounts || {},
     taskDaily: saved.taskDaily || {},
     taskMonthly: saved.taskMonthly || {},
+    legacyMonthlyTasks: saved.legacyMonthlyTasks || {},
     diary: saved.diary || {},
     attendance: saved.attendance || {}
   };
@@ -678,6 +679,7 @@ function diaryWorkCell(date, record) {
 function diaryTotalRow() {
   const totals = diaryTotals();
   const attendanceTotals = diaryAttendanceTotals();
+  const wageTotal = totalUserWages();
   return `
     <tr class="diary-total-row">
       <td>合計</td>
@@ -686,7 +688,10 @@ function diaryTotalRow() {
       <td>${attendanceTotals.absent}人</td>
       <td><span class="print-only">${yen.format(totals.bentoSales)}</span><strong class="screen-total">${yen.format(totals.bentoSales)}</strong></td>
       <td><span class="print-only">${yen.format(totals.pieceworkSales)}</span><strong class="screen-total">${yen.format(totals.pieceworkSales)}</strong></td>
-      <td>売上合計 ${yen.format(totals.bentoSales + totals.pieceworkSales)}</td>
+      <td>
+        <div>売上合計 ${yen.format(totals.bentoSales + totals.pieceworkSales)}</div>
+        <div>利用者工賃合計 ${yen.format(wageTotal)}</div>
+      </td>
     </tr>
   `;
 }
@@ -870,7 +875,8 @@ function renderCalculatedViews() {
   els.diarySummary.innerHTML = summaryHtml([
     ["弁当売上", yen.format(diary.bentoSales)],
     ["内職売上", yen.format(diary.pieceworkSales)],
-    ["売上合計", yen.format(diary.bentoSales + diary.pieceworkSales)]
+    ["売上合計", yen.format(diary.bentoSales + diary.pieceworkSales)],
+    ["利用者工賃合計", yen.format(totals.pay), "summary-item-below"]
   ]);
 
   renderMonthlyTaskCalendar();
@@ -1327,7 +1333,13 @@ function getMonthlyTaskAssignee(index) {
 }
 
 function monthlyTaskEntriesFor(userId) {
-  const entries = [];
+  const entries = (state.legacyMonthlyTasks[state.month] && state.legacyMonthlyTasks[state.month][userId] || [])
+    .map((task) => ({
+      date: state.month,
+      name: task.name,
+      label: "月額",
+      amount: Number(task.amount) || 0
+    }));
   state.taskRates.monthly.forEach((task, index) => {
     if (index === 0) return;
     if (getMonthlyTaskAssignee(index) !== userId) return;
@@ -1576,7 +1588,11 @@ function autumnEquinoxDay(year) {
 }
 
 function summaryHtml(items) {
-  return items.map(([label, value]) => `<span class="summary-item">${label} ${value}</span>`).join("");
+  return items.map(([label, value, className = ""]) => `<span class="summary-item ${className}">${label} ${value}</span>`).join("");
+}
+
+function totalUserWages() {
+  return state.users.reduce((sum, user) => sum + calculateUser(user).total, 0);
 }
 
 function round(value) {
