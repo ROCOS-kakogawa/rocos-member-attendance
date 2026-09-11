@@ -353,11 +353,47 @@ function render() {
   els.mealCostInput.value = state.settings.mealCost;
   els.holidayBonusInput.value = state.settings.holidayBonus;
   els.perfectBonusInput.value = state.settings.perfectBonus;
+  renderHolidayCalendar();
   renderUsers();
   renderTaskSettings();
   renderAttendanceTable();
   renderDiaryTable();
   renderCalculatedViews();
+}
+
+function renderHolidayCalendar() {
+  const container = document.querySelector("#holidayCalendar");
+  if (!container) return;
+  const days = monthDays();
+  const closed = days.filter(isClosedDay).length;
+  const offset = new Date(days[0] + "T00:00:00").getDay();
+  container.innerHTML = `
+    <p class="holiday-calendar-summary">${state.month}：営業日 ${days.length - closed}日 ／ 休日 ${closed}日</p>
+    <div class="holiday-calendar-scroll"><div class="holiday-calendar-grid">
+      ${["日", "月", "火", "水", "木", "金", "土"].map(day => `<div class="holiday-weekday">${day}</div>`).join("")}
+      ${Array.from({ length: offset }, () => '<div aria-hidden="true"></div>').join("")}
+      ${days.map(date => {
+        const value = state.settings.dayOverrides?.[date] || "auto";
+        return `<label class="holiday-day ${isClosedDay(date) ? "is-closed" : ""}">
+          <span>${Number(date.slice(8))}日 · ${isClosedDay(date) ? "休日" : "営業日"}</span>
+          <small>${holidayName(date) || (isDefaultClosedDay(date) ? "土日" : "平日")}</small>
+          <select data-holiday-date="${date}" aria-label="${date}の休日設定">
+            <option value="auto" ${value === "auto" ? "selected" : ""}>通常どおり</option>
+            <option value="closed" ${value === "closed" ? "selected" : ""}>休日</option>
+            <option value="open" ${value === "open" ? "selected" : ""}>営業日</option>
+          </select>
+        </label>`;
+      }).join("")}
+    </div></div>`;
+  container.onchange = event => {
+    const date = event.target.dataset.holidayDate;
+    const value = event.target.value;
+    if (!days.includes(date) || !["auto", "closed", "open"].includes(value)) return;
+    state.settings.dayOverrides = { ...(state.settings.dayOverrides || {}), [date]: value };
+    saveState();
+    render();
+    container.querySelector(`[data-holiday-date="${date}"]`)?.focus();
+  };
 }
 
 function renderUsers() {
@@ -1468,7 +1504,8 @@ function monthDays() {
 function formatDateLabel(date) {
   const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
   const parsed = new Date(`${date}T00:00:00`);
-  const holiday = holidayName(date);
+  const override = state.settings.dayOverrides?.[date];
+  const holiday = override === "closed" ? "休日（手動）" : override === "open" ? "営業日（手動）" : holidayName(date);
   return `${date.slice(5)} (${dayNames[parsed.getDay()]})${holiday ? `<span class="holiday-name">${holiday}</span>` : ""}`;
 }
 
@@ -1508,6 +1545,13 @@ function overlapMinutes(start, end, windowStart, windowEnd) {
 }
 
 function isClosedDay(date) {
+  const override = state.settings.dayOverrides?.[date];
+  if (override === "closed") return true;
+  if (override === "open") return false;
+  return isDefaultClosedDay(date);
+}
+
+function isDefaultClosedDay(date) {
   const parsed = new Date(`${date}T00:00:00`);
   return [0, 6].includes(parsed.getDay()) || Boolean(holidayName(date));
 }

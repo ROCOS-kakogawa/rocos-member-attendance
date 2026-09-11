@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>ROCO'S Works</title>
-    <link rel="stylesheet" href="styles-admin.css?v=3">
+    <link rel="stylesheet" href="styles-admin.css?v=4">
   </head>
   <body>
     <header class="app-header">
@@ -59,6 +59,12 @@
       </aside>
 
       <section class="content">
+        <details class="panel holiday-settings-panel">
+          <summary>休日カレンダー（お盆休暇・臨時休業）</summary>
+          <p>左の対象月を選び、休暇の日を「休日」に変更してください。全員の皆勤判定から除外し、工賃計算・明細に自動反映します。休日に出勤した日は休日出勤加算の対象になります。</p>
+          <p>土日・祝日を営業日にすることもできます。「通常どおり」で元の曜日・祝日の設定に戻ります。変更は自動保存されます。</p>
+          <div id="holidayCalendar"></div>
+        </details>
         <nav class="tabs" aria-label="機能切替">
           <button class="tab active" data-tab="attendance">出勤簿</button>
           <button class="tab" data-tab="wages">工賃計算</button>
@@ -146,7 +152,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="cloud-config.js"></script>
-    <script src="admin.js?v=10"></script>
+    <script src="admin.js?v=13"></script>
   </body>
 </html>
 

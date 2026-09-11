@@ -1306,3 +1306,17 @@ tbody tr:hover td {
 .slip .total {
   color: var(--accent-dark);
 }
+
+/* Monthly business-day overrides */
+.holiday-settings-panel { margin-bottom: 18px; }
+.holiday-settings-panel summary { cursor: pointer; font-weight: 700; color: var(--accent-dark); }
+.holiday-settings-panel p { margin-top: 12px; line-height: 1.7; }
+.holiday-calendar-summary { font-weight: 700; }
+.holiday-calendar-scroll { overflow-x: auto; margin-top: 12px; }
+.holiday-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); gap: 6px; min-width: 740px; }
+.holiday-weekday { text-align: center; font-weight: 700; }
+.holiday-day { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.holiday-day.is-closed { background: var(--warn); }
+.holiday-day small { color: var(--muted); }
+.holiday-day select { width: 100%; min-height: 36px; }
+@media print { .holiday-settings-panel { display: none; } }
