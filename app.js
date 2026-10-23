@@ -1,4 +1,4 @@
-﻿const CLOUD_ID = "rocos-works-member-attendance";
+const CLOUD_ID = "rocos-works-member-attendance";
 const yen = new Intl.NumberFormat("ja-JP", { style: "currency", currency: "JPY", maximumFractionDigits: 0 });
 const diaryWorkOptions = ["弁当販売", "仕入れ", "仕込み", "調理", "盛り付け", "配達", "洗い物", "清掃", "内職"];
 
@@ -6,6 +6,13 @@ let state = null;
 let cloudClient = null;
 let cloudReady = false;
 let saveTimer = null;
+let cloudSubscription = null;
+const CACHE_KEY = "rocos-member-attendance-cache";
+const PENDING_KEY = "rocos-member-attendance-pending-v1";
+let pendingChanges = readPendingChanges();
+let syncInProgress = false;
+let actionQueue = Promise.resolve();
+let actionCount = 0;
 
 const els = {
   syncStatus: document.querySelector("#syncStatus"),
@@ -48,6 +55,7 @@ const els = {
 init();
 
 async function init() {
+  preservePreviousCache();
   setInitialDates();
   bindEvents();
   tick();
@@ -55,6 +63,9 @@ async function init() {
   setupCloud();
   state = await loadState();
   render();
+  subscribeToCloudChanges();
+  window.addEventListener("focus", refreshFromCloud);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshFromCloud(); });
 }
 
 function setInitialDates() {
@@ -108,126 +119,171 @@ function syncUsers(value) {
   render();
 }
 
-async function runAction(action, noticeEl) {
-  try {
-    setStatus("保存中です");
-    await action();
-    setStatus(cloudReady ? "クラウド保存済み" : "この端末に保存中");
-  } catch (error) {
-    console.error(error);
-    if (noticeEl) noticeEl.textContent = "保存できませんでした。通信を確認して、もう一度押してください。";
-    setStatus("保存できませんでした");
-  }
+function runAction(action, noticeEl) {
+  actionCount += 1;
+  actionQueue = actionQueue.then(async () => {
+    try {
+      if (!state) throw new Error("読み込みの完了を待ってください。");
+      setStatus("保存中です");
+      await action();
+      setStatus(pendingChanges.length ? "この端末に保存済み・クラウドへの送信待ち" : "クラウド保存済み");
+    } catch (error) {
+      console.error(error);
+      if (noticeEl) noticeEl.textContent = "保存できませんでした。" + error.message;
+      setStatus("保存できませんでした");
+    } finally { actionCount -= 1; }
+  });
+  return actionQueue;
 }
 
 function setupCloud() {
-  if (!window.ROCO_CLOUD_CONFIG || !window.supabase) {
-    cloudReady = false;
-    setStatus("クラウド設定がありません");
-    return false;
+  cloudReady = Boolean(window.ROCO_CLOUD_CONFIG?.supabaseUrl && window.ROCO_CLOUD_CONFIG?.supabaseAnonKey);
+  return cloudReady;
+}
+
+async function cloudRequest(select, update, expectedUpdatedAt) {
+  const config = window.ROCO_CLOUD_CONFIG;
+  const url = new URL(config.supabaseUrl + "/rest/v1/register_state");
+  url.searchParams.set("id", "eq." + CLOUD_ID);
+  url.searchParams.set("select", select);
+  if (expectedUpdatedAt) url.searchParams.set("updated_at", "eq." + expectedUpdatedAt);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url.href, {
+      method: update ? "PATCH" : "GET",
+      headers: { apikey: config.supabaseAnonKey, Authorization: "Bearer " + config.supabaseAnonKey,
+        "Content-Type": "application/json", Prefer: "return=representation" },
+      ...(update ? { body: JSON.stringify(update) } : {}),
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error("クラウド通信エラー (" + response.status + ")");
+    return await response.json();
+  } finally { window.clearTimeout(timeout); }
+}
+
+function readPendingChanges() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PENDING_KEY) || "[]");
+    return Array.isArray(saved) ? saved : [];
+  } catch { return []; }
+}
+
+function clone(value) { return JSON.parse(JSON.stringify(value)); }
+
+function collectChanges(before, after, path = [], changes = []) {
+  if (JSON.stringify(before) === JSON.stringify(after)) return changes;
+  if (before && after && typeof before === "object" && typeof after === "object" && !Array.isArray(before) && !Array.isArray(after)) {
+    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      collectChanges(before[key], after[key], [...path, key], changes);
+    }
+  } else {
+    changes.push(after === undefined ? { path, remove: true } : { path, value: clone(after) });
   }
-  cloudClient = window.supabase.createClient(
-    window.ROCO_CLOUD_CONFIG.supabaseUrl,
-    window.ROCO_CLOUD_CONFIG.supabaseAnonKey
-  );
-  cloudReady = true;
-  return true;
+  return changes;
+}
+
+function applyChanges(target, changes) {
+  for (const change of changes) {
+    if (!Array.isArray(change.path) || !change.path.length || change.path.some(key => ["__proto__", "constructor", "prototype"].includes(key))) continue;
+    let parent = target;
+    for (const key of change.path.slice(0, -1)) {
+      if (!parent[key] || typeof parent[key] !== "object") parent[key] = {};
+      parent = parent[key];
+    }
+    const key = change.path[change.path.length - 1];
+    if (change.remove) delete parent[key];
+    else parent[key] = clone(change.value);
+  }
+  return target;
+}
+
+function subscribeToCloudChanges() {
+  if (cloudSubscription) return;
+  cloudSubscription = window.setInterval(() => { if (!document.hidden) refreshFromCloud(); }, 30000);
+}
+
+async function refreshFromCloud() {
+  if (!cloudReady || !state || syncInProgress || actionCount) return;
+  syncInProgress = true;
+  try {
+    if (pendingChanges.length) await flushPendingChanges();
+    else {
+      const rows = await cloudRequest("data,updated_at");
+      if (!rows[0]?.data) throw new Error("クラウドデータがありません");
+      // An edit may have started while this request was in flight.
+      if (actionCount || pendingChanges.length) return;
+      const latest = normalizeState(rows[0].data);
+      localStorage.setItem(CACHE_KEY, JSON.stringify(latest));
+      state = latest;
+    }
+    if (!actionCount) render();
+    setStatus(pendingChanges.length ? "この端末に保存済み・クラウドへの送信待ち" : "クラウドと同期しました");
+  } catch (error) {
+    console.error(error);
+    setStatus(pendingChanges.length ? "この端末に保存済み・クラウドへの送信待ち" : "通信できません。端末のデータを表示中");
+  } finally { syncInProgress = false; }
 }
 
 async function loadState() {
-  if (cloudReady) {
-    try {
-      const { data, error } = await cloudClient
-        .from("register_state")
-        .select("data")
-        .eq("id", CLOUD_ID)
-        .single();
-      if (!error && data && data.data) {
-        localStorage.setItem("rocos-member-attendance-cache", JSON.stringify(data.data));
-        setStatus("クラウドから読み込みました");
-        return normalizeState(data.data);
-      }
-      const cached = loadCachedState();
-      if (cached) {
-        setStatus("端末保存を表示中");
-        return normalizeState(cached);
-      }
-      setStatus("初期データを表示中");
-      return await loadSeedState();
-    } catch (error) {
-      console.error(error);
-      setStatus("クラウドにつながりません。端末保存を表示中");
-    }
-  }
-  return normalizeState(loadCachedState() || await loadSeedState());
+  const cached = loadCachedState();
+  const local = applyChanges(normalizeState(cached || window.ROCO_MEMBER_SEED || {}), pendingChanges);
+  setStatus(pendingChanges.length ? "この端末に保存済み・クラウドへの送信待ち" : "端末のデータを表示中・クラウド確認中");
+  window.setTimeout(refreshFromCloud, 0);
+  return local;
 }
 
 function loadCachedState() {
-  try {
-    return JSON.parse(localStorage.getItem("rocos-member-attendance-cache") || "null");
-  } catch {
-    return null;
-  }
-}
-async function loadLatestState() {
-  if (!cloudReady) return state;
-  const { data, error } = await cloudClient
-    .from("register_state")
-    .select("data")
-    .eq("id", CLOUD_ID)
-    .single();
-  if (error || !data || !data.data) return state;
-  state = normalizeState(data.data);
-  return state;
+  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); }
+  catch { return null; }
 }
 
-async function loadSeedState() {
-  const response = await fetch("seed-data.json", { cache: "no-store" });
-  if (!response.ok) throw new Error("初期データを読み込めません");
-  return normalizeState(await response.json());
-}
-
-async function saveWholeState(nextState, expectedUpdatedAt = null) {
-  state = normalizeState(nextState);
-  localStorage.setItem("rocos-member-attendance-cache", JSON.stringify(state));
-  if (!cloudReady) return false;
-  let query = cloudClient
-    .from("register_state")
-    .update({ data: state, updated_at: new Date().toISOString() })
-    .eq("id", CLOUD_ID);
-  if (expectedUpdatedAt) query = query.eq("updated_at", expectedUpdatedAt);
-  const { data, error } = await query.select("updated_at");
-  if (error) throw error;
-  return Array.isArray(data) && data.length === 1;
-}
-
-async function patchState(mutator) {
-  if (!cloudReady) {
-    const local = normalizeState(state);
-    mutator(local);
-    await saveWholeState(local);
-    render();
-    return;
-  }
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const { data, error } = await cloudClient
-      .from("register_state")
-      .select("data, updated_at")
-      .eq("id", CLOUD_ID)
-      .single();
-    if (error || !data || !data.data) throw error || new Error("クラウドデータを読み込めません");
-    const latest = normalizeState(data.data);
-    mutator(latest);
-    if (await saveWholeState(latest, data.updated_at)) {
-      render();
+async function flushPendingChanges() {
+  if (!cloudReady || !pendingChanges.length) return;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const rows = await cloudRequest("data,updated_at");
+    const row = rows[0];
+    if (!row?.data || !row.updated_at) throw new Error("クラウドデータを読み込めません");
+    const sentCount = pendingChanges.length;
+    const merged = applyChanges(normalizeState(row.data), pendingChanges.slice(0, sentCount));
+    const saved = await cloudRequest("updated_at", { data: merged, updated_at: new Date().toISOString() }, row.updated_at);
+    if (saved.length === 1) {
+      const remaining = pendingChanges.slice(sentCount);
+      localStorage.setItem(PENDING_KEY, JSON.stringify(remaining));
+      pendingChanges = remaining;
+      const latest = applyChanges(merged, remaining);
+      localStorage.setItem(CACHE_KEY, JSON.stringify(latest));
+      state = latest;
       return;
     }
   }
-  throw new Error("同時更新が続いたため保存できませんでした");
+  throw new Error("同時更新のため再送待ちです");
+}
+
+async function patchState(mutator) {
+  const local = clone(normalizeState(state));
+  mutator(local);
+  const changes = collectChanges(state, local);
+  if (!changes.length) return;
+  const nextPending = [...pendingChanges, ...changes];
+  // Persist the retry journal first so a closed tab cannot lose unsent edits.
+  localStorage.setItem(PENDING_KEY, JSON.stringify(nextPending));
+  pendingChanges = nextPending;
+  state = local;
+  localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+  render();
+  setStatus("この端末に保存済み・クラウドへ送信中");
+  if (syncInProgress) return;
+  syncInProgress = true;
+  try { await flushPendingChanges(); }
+  catch (error) { console.error(error); }
+  finally { syncInProgress = false; }
 }
 
 function normalizeState(raw = {}) {
+  raw = raw && typeof raw === "object" ? raw : {};
   return {
+    ...raw,
     month: raw.month || monthKey(new Date()),
     taskVersion: raw.taskVersion || 2,
     settings: raw.settings || {},
@@ -558,3 +614,31 @@ function escapeAttr(value) {
 
 
 
+
+
+function preservePreviousCache() {
+  const key = "rocos-member-attendance-before-update-20261023";
+  try {
+    const old = localStorage.getItem(CACHE_KEY);
+    if (old && !localStorage.getItem(key)) localStorage.setItem(key, old);
+    if (!localStorage.getItem(key) || document.getElementById("downloadPreviousCache")) return;
+    const button = document.createElement("button");
+    button.id = "downloadPreviousCache";
+    button.type = "button";
+    button.textContent = "更新前の端末記録をダウンロード";
+    button.style.cssText = "margin:12px;font-size:12px";
+    button.addEventListener("click", () => {
+      const content = localStorage.getItem(key);
+      if (!content) return;
+      const url = URL.createObjectURL(new Blob([content], {type:"application/json"}));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "メンバー出勤簿-更新前の端末記録.json";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+    document.body.appendChild(button);
+  } catch (error) { console.error("更新前記録のバックアップに失敗しました", error); throw error; }
+}

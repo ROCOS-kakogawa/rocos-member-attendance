@@ -87,6 +87,21 @@ let baseState = deepClone(defaultState);
 let saveTimer = null;
 let cloudClient = null;
 let cloudReady = false;
+let cloudSubscription = null;
+let saveRevision = 0;
+let savedRevision = 0;
+let saveInFlight = false;
+const ADMIN_PENDING_KEY = "rocos-member-attendance-admin-pending-v1";
+let refreshInFlight = false;
+function setSyncStatus(message) {
+  const element = document.getElementById("syncStatus");
+  if (element) element.textContent = message;
+}
+function persistPendingSave() {
+  localStorage.setItem(ADMIN_PENDING_KEY, JSON.stringify({base: baseState, local: state}));
+  localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+}
+
 
 const els = {
   monthInput: document.querySelector("#monthInput"),
@@ -117,61 +132,86 @@ const els = {
 init();
 
 async function init() {
+  preservePreviousCache();
   bindStaticEvents();
   setupCloud();
   await loadSharedState();
   render();
+  subscribeToCloudChanges();
+  window.addEventListener("focus", refreshFromCloud);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshFromCloud(); });
 }
 
 async function loadSharedState() {
-  if (cloudReady) {
-    try {
-      const { data, error } = await cloudClient
-        .from("register_state")
-        .select("data, updated_at")
-        .eq("id", CLOUD_ID)
-        .single();
-      if (!error && data && data.data) {
-        state = migrateState(data.data);
-        baseState = deepClone(state);
-        localStorage.setItem(CACHE_KEY, JSON.stringify(state));
-        return;
-      }
-      state = migrateState(loadCachedState() || await loadSeedState());
-      return;
-    } catch (error) {
-      console.error(error);
-    }
-  }
-  try {
-    state = migrateState(loadCachedState() || await loadSeedState());
-  } catch {
-    state = deepClone(defaultState);
+  let pending = null;
+  try { pending = JSON.parse(localStorage.getItem(ADMIN_PENDING_KEY) || "null"); }
+  catch (error) { console.error(error); }
+  state = migrateState(pending?.local || loadCachedState() || window.ROCO_MEMBER_SEED || defaultState);
+  baseState = migrateState(pending?.base || state);
+  if (pending?.local) {
+    saveRevision = 1;
+    saveTimer = setTimeout(flushPendingSaves, 0);
+    setSyncStatus("この端末に保存済み・クラウドへの送信待ち");
+  } else {
+    setSyncStatus("端末のデータを表示中・クラウド確認中");
+    setTimeout(refreshFromCloud, 0);
   }
 }
 
 function setupCloud() {
-  if (!window.ROCO_CLOUD_CONFIG || !window.supabase) return false;
-  cloudClient = window.supabase.createClient(
-    window.ROCO_CLOUD_CONFIG.supabaseUrl,
-    window.ROCO_CLOUD_CONFIG.supabaseAnonKey
-  );
-  cloudReady = true;
-  return true;
+  cloudReady = Boolean(window.ROCO_CLOUD_CONFIG?.supabaseUrl && window.ROCO_CLOUD_CONFIG?.supabaseAnonKey);
+  return cloudReady;
 }
 
-async function loadSeedState() {
-  const response = await fetch("seed-data.json", { cache: "no-store" });
-  if (!response.ok) throw new Error("seed-data.json could not be loaded");
-  return response.json();
+async function adminCloudRequest(select, update, expectedUpdatedAt) {
+  const config = window.ROCO_CLOUD_CONFIG;
+  const url = new URL(config.supabaseUrl + "/rest/v1/register_state");
+  url.searchParams.set("id", "eq." + CLOUD_ID);
+  url.searchParams.set("select", select);
+  if (expectedUpdatedAt) url.searchParams.set("updated_at", "eq." + expectedUpdatedAt);
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(url.href, {
+      method: update ? "PATCH" : "GET",
+      headers: { apikey: config.supabaseAnonKey, Authorization: "Bearer " + config.supabaseAnonKey,
+        "Content-Type": "application/json", Prefer: "return=representation" },
+      ...(update ? { body: JSON.stringify(update) } : {}),
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error("クラウド通信エラー (" + response.status + ")");
+    return await response.json();
+  } finally { window.clearTimeout(timeout); }
+}
+
+function hasPendingSave() { return saveInFlight || savedRevision < saveRevision; }
+
+function subscribeToCloudChanges() {
+  if (cloudSubscription) return;
+  cloudSubscription = setInterval(() => { if (!document.hidden) refreshFromCloud(); }, 30000);
+}
+
+async function refreshFromCloud() {
+  if (!cloudReady || hasPendingSave() || refreshInFlight) return;
+  refreshInFlight = true;
+  try {
+    const rows = await adminCloudRequest("data,updated_at");
+    if (hasPendingSave()) return;
+    if (!rows[0]?.data) throw new Error("クラウドデータがありません");
+    state = migrateState(rows[0].data);
+    baseState = deepClone(state);
+    localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+    render();
+    setSyncStatus("クラウドと同期しました");
+  } catch (error) {
+    console.error(error);
+    setSyncStatus(hasPendingSave() ? "この端末に保存済み・クラウドへの送信待ち" : "通信できません。端末のデータを表示中");
+  } finally { refreshInFlight = false; }
 }
 
 function loadCachedState() {
-  try {
-    return JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); }
+  catch { return null; }
 }
 
 function sameValue(left, right) {
@@ -208,32 +248,26 @@ function mergeConcurrent(base, local, remote) {
   return result;
 }
 
-async function saveStateNow() {
-  const localState = migrateState(state);
+async function saveStateNow(localSnapshot, targetRevision) {
+  const localState = migrateState(localSnapshot);
   localStorage.setItem(CACHE_KEY, JSON.stringify(localState));
   if (!cloudReady) {
     state = localState;
-    baseState = deepClone(state);
     return false;
   }
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const { data: current, error: readError } = await cloudClient
-      .from("register_state")
-      .select("data, updated_at")
-      .eq("id", CLOUD_ID)
-      .single();
-    if (readError || !current || !current.data) throw readError || new Error("Cloud data is unavailable");
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const rows = await adminCloudRequest("data,updated_at");
+    const current = rows[0];
+    const readError = null;
+    if (readError || !current || !current.data || !current.updated_at) throw readError || new Error("Cloud data is unavailable");
     const merged = migrateState(mergeConcurrent(baseState, localState, migrateState(current.data)));
-    const { data: saved, error: saveError } = await cloudClient
-      .from("register_state")
-      .update({ data: merged, updated_at: new Date().toISOString() })
-      .eq("id", CLOUD_ID)
-      .eq("updated_at", current.updated_at)
-      .select("data, updated_at");
+    const saved = await adminCloudRequest("data,updated_at", { data: merged, updated_at: new Date().toISOString() }, current.updated_at);
+    const saveError = null;
     if (saveError) throw saveError;
     if (saved && saved.length === 1) {
-      state = migrateState(saved[0].data);
-      baseState = deepClone(state);
+      const savedState = migrateState(saved[0].data);
+      state = saveRevision === targetRevision ? savedState : migrateState(mergeConcurrent(localState, state, savedState));
+      baseState = deepClone(savedState);
       localStorage.setItem(CACHE_KEY, JSON.stringify(state));
       return true;
     }
@@ -298,10 +332,36 @@ function mergePieceTasks(defaults, saved = []) {
 }
 
 function saveState() {
+  saveRevision += 1;
+  persistPendingSave();
+  setSyncStatus("この端末に保存済み・クラウドへの送信待ち");
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(async () => {
-    await saveStateNow();
-  }, 250);
+  saveTimer = setTimeout(flushPendingSaves, 250);
+}
+
+async function flushPendingSaves() {
+  if (saveInFlight) return;
+  saveInFlight = true;
+  try {
+    while (savedRevision < saveRevision) {
+      const targetRevision = saveRevision;
+      const snapshot = deepClone(state);
+      setSyncStatus("この端末に保存済み・クラウドへ送信中");
+      const uploaded = await saveStateNow(snapshot, targetRevision);
+      if (!uploaded) throw new Error("クラウドに接続できません");
+      savedRevision = targetRevision;
+      if (savedRevision === saveRevision) localStorage.removeItem(ADMIN_PENDING_KEY);
+      else persistPendingSave();
+      setSyncStatus(savedRevision === saveRevision ? "クラウド保存済み" : "この端末に保存済み・クラウドへの送信待ち");
+    }
+  } catch (error) {
+    console.error(error);
+    clearTimeout(saveTimer);
+    setSyncStatus("この端末に保存済み・クラウドへの送信待ち（自動で再送します）");
+    saveTimer = setTimeout(flushPendingSaves, 30000);
+  } finally {
+    saveInFlight = false;
+  }
 }
 function bindStaticEvents() {
   els.monthInput.addEventListener("change", (event) => {
@@ -341,7 +401,10 @@ function bindStaticEvents() {
   if (els.exportButton) els.exportButton.addEventListener("click", exportCsv);
   if (els.printButton) els.printButton.addEventListener("click", printCurrentView);
   if (els.importRegisterCsvButton) els.importRegisterCsvButton.addEventListener("click", () => {
-    if (els.registerCsvInput) els.registerCsvInput.click();
+    if (els.registerCsvInput) {
+      els.registerCsvInput.value = "";
+      els.registerCsvInput.click();
+    }
   });
   if (els.registerCsvInput) els.registerCsvInput.addEventListener("change", importRegisterCsv);
 }
@@ -722,11 +785,11 @@ function diaryTotalRow() {
       <td>${attendanceTotals.office}人</td>
       <td>${attendanceTotals.remote}人</td>
       <td>${attendanceTotals.absent}人</td>
-      <td><span class="print-only">${yen.format(totals.bentoSales)}</span><strong class="screen-total">${yen.format(totals.bentoSales)}</strong></td>
-      <td><span class="print-only">${yen.format(totals.pieceworkSales)}</span><strong class="screen-total">${yen.format(totals.pieceworkSales)}</strong></td>
+      <td><span class="print-only" data-diary-total="bentoSales">${yen.format(totals.bentoSales)}</span><strong class="screen-total" data-diary-total="bentoSales">${yen.format(totals.bentoSales)}</strong></td>
+      <td><span class="print-only" data-diary-total="pieceworkSales">${yen.format(totals.pieceworkSales)}</span><strong class="screen-total" data-diary-total="pieceworkSales">${yen.format(totals.pieceworkSales)}</strong></td>
       <td>
-        <div>売上合計 ${yen.format(totals.bentoSales + totals.pieceworkSales)}</div>
-        <div>利用者工賃合計 ${yen.format(wageTotal)}</div>
+        <div>売上合計 <span data-diary-total="salesTotal">${yen.format(totals.bentoSales + totals.pieceworkSales)}</span></div>
+        <div>利用者工賃合計 <span data-diary-total="wageTotal">${yen.format(wageTotal)}</span></div>
       </td>
     </tr>
   `;
@@ -754,8 +817,28 @@ function handleDiaryInput(event) {
       renderCalculatedViews();
 }
 
+function updateDiaryTotalRow() {
+  if (!els.diaryTable) return;
+  const totals = diaryTotals();
+  const values = {
+    bentoSales: totals.bentoSales,
+    pieceworkSales: totals.pieceworkSales,
+    salesTotal: totals.bentoSales + totals.pieceworkSales,
+    wageTotal: totalUserWages()
+  };
+  els.diaryTable.querySelectorAll("[data-diary-total]").forEach((element) => {
+    element.textContent = yen.format(values[element.dataset.diaryTotal] || 0);
+  });
+}
+
 function parseMoneyInput(value) {
-  return Number(String(value).split(",").join("").replace(/[^\d]/g, "")) || 0;
+  const text = String(value ?? "").trim();
+  if (!text) return 0;
+  const isNegative = /^-/.test(text) || /^\(.*\)$/.test(text);
+  const normalized = text.replace(/[￥¥円,\s()]/g, "");
+  const number = Number(normalized);
+  if (!Number.isFinite(number)) return 0;
+  return Math.round(Math.abs(number)) * (isNegative ? -1 : 1);
 }
 
 function formatMoneyInput(value) {
@@ -765,12 +848,17 @@ function formatMoneyInput(value) {
 
 async function importRegisterCsv(event) {
   const file = event.target.files && event.target.files[0];
-  event.target.value = "";
   if (!file) return;
 
   const text = await file.text();
   const rows = parseCsv(text);
-  const imported = extractRegisterSales(rows);
+  let imported;
+  try {
+    imported = extractRegisterSales(rows);
+  } catch (error) {
+    alert(error.message);
+    return;
+  }
   const entries = Object.entries(imported).filter(([date]) => date.startsWith(state.month));
 
   if (!entries.length) {
@@ -778,21 +866,20 @@ async function importRegisterCsv(event) {
     return;
   }
 
-  const conflicts = entries.filter(([date, sales]) => {
+  const updatedCount = entries.filter(([date, sales]) => {
     const current = Number(state.diary[date] && state.diary[date].bentoSales) || 0;
-    return current && current !== sales;
-  });
-  const shouldOverwrite = !conflicts.length || confirm(`すでに金額が入っている日が${conflicts.length}日あります。CSVの金額で上書きしますか？`);
+    return current !== sales;
+  }).length;
 
   entries.forEach(([date, sales]) => {
     state.diary[date] = state.diary[date] || {};
-    if (!shouldOverwrite && Number(state.diary[date].bentoSales)) return;
     state.diary[date].bentoSales = sales;
   });
   saveState();
   renderDiaryTable();
   renderCalculatedViews();
-  alert(`${entries.length}日分の弁当売上を取り込みました。`);
+  const importedTotal = entries.reduce((total, [, sales]) => total + sales, 0);
+  alert(`${entries.length}日分、合計${yen.format(importedTotal)}の弁当売上を取り込みました（更新${updatedCount}日）。レジの月間合計と一致していることを確認してください。`);
 }
 
 function parseCsv(text) {
@@ -831,16 +918,19 @@ function parseCsv(text) {
 function extractRegisterSales(rows) {
   if (!rows.length) return {};
   const header = rows[0].map((cell) => normalizeCell(cell));
-  const dateIndex = header.findIndex((cell) => ["日付", "日時", "date", "販売日", "売上日"].some((key) => cell.includes(key)));
-  const salesIndex = header.findIndex((cell) => ["売上", "合計", "小計", "金額", "total", "amount"].some((key) => cell.includes(key)));
-  const dataRows = dateIndex >= 0 && salesIndex >= 0 ? rows.slice(1) : rows;
+  const dateIndex = findHeaderIndex(header, ["会計日", "販売日", "売上日", "取引日", "日付", "日時", "date"]);
+  const salesIndex = findHeaderIndex(header, ["合計", "合計金額", "売上合計", "税込合計", "税込売上", "総売上", "total", "amount"]);
+  if (dateIndex < 0 || salesIndex < 0) {
+    throw new Error("CSVの「日付」と「合計売上」の列を特定できませんでした。小計や税額を誤って取り込まないため、処理を中止しました。");
+  }
+  const dataRows = rows.slice(1);
   const result = {};
 
   dataRows.forEach((row) => {
-    const date = dateIndex >= 0 ? normalizeDate(row[dateIndex]) : findDateInRow(row);
+    const date = normalizeDate(row[dateIndex]);
     if (!date) return;
-    const sales = salesIndex >= 0 ? parseMoneyInput(row[salesIndex]) : findLargestMoneyInRow(row);
-    if (!sales) return;
+    const sales = parseMoneyInput(row[salesIndex]);
+    if (!sales && String(row[salesIndex] ?? "").trim() === "") return;
     result[date] = (result[date] || 0) + sales;
   });
 
@@ -848,7 +938,18 @@ function extractRegisterSales(rows) {
 }
 
 function normalizeCell(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "").replace(/[\s　]/g, "").trim().toLowerCase();
+}
+
+function findHeaderIndex(header, preferredNames) {
+  for (const name of preferredNames) {
+    const matches = header
+      .map((cell, index) => cell === name ? index : -1)
+      .filter((index) => index >= 0);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) return -1;
+  }
+  return -1;
 }
 
 function findDateInRow(row) {
@@ -914,6 +1015,7 @@ function renderCalculatedViews() {
     ["売上合計", yen.format(diary.bentoSales + diary.pieceworkSales)],
     ["利用者工賃合計", yen.format(totals.pay), "summary-item-below"]
   ]);
+  updateDiaryTotalRow();
 
   renderMonthlyTaskCalendar();
   renderWageTable(rows);
@@ -1696,3 +1798,30 @@ window.addEventListener("beforeprint", () => {
 
 
 
+
+function preservePreviousCache() {
+  const key = "rocos-member-attendance-before-update-20261023";
+  try {
+    const old = localStorage.getItem(CACHE_KEY);
+    if (old && !localStorage.getItem(key)) localStorage.setItem(key, old);
+    if (!localStorage.getItem(key) || document.getElementById("downloadPreviousCache")) return;
+    const button = document.createElement("button");
+    button.id = "downloadPreviousCache";
+    button.type = "button";
+    button.textContent = "更新前の端末記録をダウンロード";
+    button.style.cssText = "margin:12px;font-size:12px";
+    button.addEventListener("click", () => {
+      const content = localStorage.getItem(key);
+      if (!content) return;
+      const url = URL.createObjectURL(new Blob([content], {type:"application/json"}));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "メンバー出勤簿-更新前の端末記録.json";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+    document.body.appendChild(button);
+  } catch (error) { console.error("更新前記録のバックアップに失敗しました", error); throw error; }
+}
