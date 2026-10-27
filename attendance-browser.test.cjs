@@ -12,7 +12,7 @@ const path=require('node:path');
     });
     const page=await context.newPage();
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
-    const base=pathToFileURL(path.join(__dirname,'index.html')).href;
+    const base=pathToFileURL(path.join(__dirname,'index.html')).href+'?input=1';
     await page.goto(base);
     await page.waitForFunction(()=>document.querySelector('#punchUser').options.length>0,{},{timeout:3000});
     assert.doesNotMatch(await page.locator('#punchStatus').innerText(),/読み込み中/);

@@ -56,6 +56,10 @@ init();
 
 async function init() {
   preservePreviousCache();
+  if (location.protocol === "file:" && !window.ROCO_IPAD_MODE && !new URL(location.href).searchParams.has("input") && !pendingChanges.length) {
+    location.replace(new URL("pc.html", location.href).href);
+    return;
+  }
   setInitialDates();
   bindEvents();
   tick();
@@ -214,7 +218,7 @@ async function refreshFromCloud() {
       // An edit may have started while this request was in flight.
       if (actionCount || pendingChanges.length) return;
       const latest = normalizeState(rows[0].data);
-      localStorage.setItem(CACHE_KEY, JSON.stringify(latest));
+      cacheFetchedState(latest);
       state = latest;
     }
     if (!actionCount) render();
@@ -252,7 +256,7 @@ async function flushPendingChanges() {
       localStorage.setItem(PENDING_KEY, JSON.stringify(remaining));
       pendingChanges = remaining;
       const latest = applyChanges(merged, remaining);
-      localStorage.setItem(CACHE_KEY, JSON.stringify(latest));
+      cacheFetchedState(latest);
       state = latest;
       return;
     }
@@ -640,5 +644,10 @@ function preservePreviousCache() {
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     });
     document.body.appendChild(button);
-  } catch (error) { console.error("更新前記録のバックアップに失敗しました", error); throw error; }
+  } catch (error) { console.error("更新前記録のバックアップに失敗しました。元の記録は保持します", error); }
+}
+
+function cacheFetchedState(value) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(value)); }
+  catch (error) { console.error("端末控えを更新できません。クラウドの記録を表示します", error); }
 }

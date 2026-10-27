@@ -200,7 +200,7 @@ async function refreshFromCloud() {
     if (!rows[0]?.data) throw new Error("クラウドデータがありません");
     state = migrateState(rows[0].data);
     baseState = deepClone(state);
-    localStorage.setItem(CACHE_KEY, JSON.stringify(state));
+    cacheFetchedState(state);
     render();
     setSyncStatus("クラウドと同期しました");
   } catch (error) {
@@ -1823,5 +1823,10 @@ function preservePreviousCache() {
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     });
     document.body.appendChild(button);
-  } catch (error) { console.error("更新前記録のバックアップに失敗しました", error); throw error; }
+  } catch (error) { console.error("更新前記録のバックアップに失敗しました。元の記録は保持します", error); }
+}
+
+function cacheFetchedState(value) {
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(value)); }
+  catch (error) { console.error("端末控えを更新できません。クラウドの記録を表示します", error); }
 }
