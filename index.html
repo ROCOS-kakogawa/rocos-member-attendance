@@ -4,6 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>メンバー出勤簿</title>
+<script data-device-guard>
+(function () {
+  var ua = navigator.userAgent || '';
+  var isIPad = /iPad/.test(ua) || ((navigator.platform === 'MacIntel' || /Macintosh/.test(ua)) && navigator.maxTouchPoints > 1);
+  window.ROCO_IPAD_MODE = isIPad;
+  if (!isIPad) return;
+  document.documentElement.classList.add('ipad-input-only');
+  if (/\/pc\.html$/i.test(location.pathname)) {
+    window.ROCO_DEVICE_RESTRICTED = true;
+    location.replace(new URL('index.html', location.href).href);
+  }
+}());
+</script>
+<style>html.ipad-input-only .admin-link { display: none !important; } html.ipad-input-only[data-admin-page] body { display: none !important; }</style>
   <meta name="theme-color" content="#f28c28">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.png">

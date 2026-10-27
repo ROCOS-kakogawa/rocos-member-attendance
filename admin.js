@@ -129,7 +129,7 @@ const els = {
   registerCsvInput: document.querySelector("#registerCsvInput")
 };
 
-init();
+if (!window.ROCO_DEVICE_RESTRICTED) { init(); }
 
 async function init() {
   preservePreviousCache();
